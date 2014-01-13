@@ -83,3 +83,16 @@ $ wget http://ftp.drupal.org/files/projects/drupal-7.24.tar.gz
 $ drush dsd-init @groups-dev drupal-7.24.tar.gz
 ```
 
+### Upgrade to a new release or snapshot ###
+
+```bash
+$ wget http://ftp.drupal.org/files/projects/drupal-7.25.tar.gz
+$ drush dsd-update @groups-dev drupal-7.25.tar.gz
+```
+
+### Rollback to latest working version ###
+
+```bash
+$ drush dsd-rollback @groups-dev
+```
+
