@@ -9,9 +9,29 @@ Site definitions are stored in aliases.drushrc.php file:
 <?php
 
 $aliases['groups-dev'] = array(
-  'root' => '/Users/martonkiss/Sites/00',
+  'root' => '/Users/username/Sites/groups-dev/w',
+  'dsd-root' => '/Users/username/Sites/groups-dev',
   'uri' => 'groups-dev.local',
+  'databases' => array(
+    'default' => array(
+      'driver' => 'mysql',
+      'username' => 'dsdtest',
+      'password'  => 'my-s3cr3t-passw0rd',
+      'port' => '',
+      'host' => 'localhost',
+      'database' => 'dsdtest',
+    ),
+  ),
+  'file-owner' => 'username',
+  'file-group' => 'www-data',
+  'variables' => array(
+    'site_name' => 'My Drupal Site',
+  ),
+  'profile' => 'standard',
+  'default-admin-password' => 'my-s3cr3t-admin-passw0rd',
+  'disable-features-revert' => TRUE,
 );
+
 ```
 
 Usage
@@ -29,10 +49,29 @@ none
 
 ```bash
 $ drush sa @groups-dev
-$aliases["groups-dev"] = array (
-  'root' => '/Users/martonkiss/Sites/00',
+$aliases['groups-dev'] = array(
+  'root' => '/Users/username/Sites/groups-dev/w',
+  'dsd-root' => '/Users/username/Sites/groups-dev',
   'uri' => 'groups-dev.local',
-  '#file' => '/Users/martonkiss/Workspace/openstack/drupalsitedeploy/drush/includes/../aliases.drushrc.php',
+  'databases' => array(
+    'default' => array(
+      'driver' => 'mysql',
+      'username' => 'dsdtest',
+      'password'  => 'my-s3cr3t-passw0rd',
+      'port' => '',
+      'host' => 'localhost',
+      'database' => 'dsdtest',
+    ),
+  ),
+  'file-owner' => 'username',
+  'file-group' => 'www-data',
+  'variables' => array(
+    'site_name' => 'My Drupal Site',
+  ),
+  'profile' => 'standard',
+  'default-admin-password' => 'my-s3cr3t-admin-passw0rd',
+  'disable-features-revert' => TRUE,
+  '#file' => '/Users/username/Workspace/openstack/drupalsitedeploy/drush/includes/../aliases.drushrc.php',
   '#name' => 'groups-dev',
 );
 ```
@@ -40,6 +79,7 @@ $aliases["groups-dev"] = array (
 ### Initialize a new site environment ###
 
 ```bash
-$ drush dsd-init @groups-dev http://static.openstack.org/groups/groups-dev-20140101-001.tar.gz
+$ wget http://ftp.drupal.org/files/projects/drupal-7.24.tar.gz
+$ drush dsd-init @groups-dev drupal-7.24.tar.gz
 ```
 
