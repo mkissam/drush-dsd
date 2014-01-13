@@ -1,0 +1,409 @@
+<?php
+/**
+ * @file
+ * Drush Site Deploy commands.
+ */
+
+function dsd_drush_help($section) {
+  switch ($section) {
+    case 'meta:dsd:title':
+      return dt('Drush site deploy commands');
+    case 'meta:dsd:summary':
+      return dt('Deploy and upgrade Drupal sites.');
+  }
+}
+
+function dsd_drush_command() {
+  $items['dsd-init'] = array(
+    'description' => 'Initialize a site environment',
+    'bootstrap' => DRUSH_BOOTSTRAP_DRUSH,
+    'arguments' => array(
+      'site' => 'Site alias',
+      'file' => 'The site archive file that contains the distribution.',
+    ),
+    'required-arguments' => 2,
+  );
+  $items['dsd-update'] = array(
+      'description' => 'Update an existing site environment',
+      'bootstrap' => DRUSH_BOOTSTRAP_DRUSH,
+      'arguments' => array(
+          'site' => 'Site alias',
+          'file' => 'The site archive file that contains the distribution.',
+      ),
+      'required-arguments' => 2,
+  );
+  $items['dsd-rollback'] = array(
+      'description' => 'Rollback to the previous site environment',
+      'bootstrap' => DRUSH_BOOTSTRAP_DRUSH,
+      'arguments' => array(
+          'site' => 'Site alias',
+      ),
+      'required-arguments' => 1,
+  );
+  return $items;
+}
+
+/**
+ * Return a site alias from command arguments.
+ *
+ * @return Ambigous <Always, boolean>|mixed
+ */
+
+function _drush_dsd_get_sitealias() {
+  $command = drush_get_command();
+  $specifications = $command['arguments'][0];
+  if (!empty($specifications)) {
+    list($site_list, $not_found) = drush_sitealias_resolve_sitespecs($specifications);
+    if (!empty($not_found)) {
+      return drush_set_error('DRUSH_ALIAS_NOT_FOUND', dt("Not found: @list", array("@list" => implode(', ', $not_found))));
+    }
+    if (count($site_list) > 1) {
+      return drush_set_error('DRUSH_ALIAS_TOO_MUCH', 'You need to specify only one site alias.');
+    }
+  } else {
+    return drush_set_error('DRUSH_ALIAS_NOT_FOUND', 'You must specifiy a site alias.');
+  }
+  return reset($site_list);
+}
+
+/**
+ * Execute drush site-install in a prepared Drupal environment
+ *
+ * @param unknown $site
+ * @param unknown $subdirs
+ * @return boolean
+ */
+
+function _drush_dsd_site_install($site, $subdirs) {
+  drush_print('Site install.');
+  $profile = isset($site['profile']) ? $site['profile'] : 'standard';
+  $db = $site['databases']['default'];
+  $db_url = $db['driver'].'://'.$db['username'].':'.$db['password'].'@'.$db['host'].'/'.$db['database'];
+  $result = drush_shell_cd_and_exec($subdirs['slot0'], "drush site-install -y $profile --db-url=$db_url");
+  if ($result != TRUE) {
+    return drush_set_error('DRUSH_DSD_INSTALL_FAILED', 'Drush site-install failed.');
+  }
+  // set settings.php file permission to r/o
+  chmod($subdirs['slot0'].'/sites/default/settings.php', 0440);
+  return TRUE;
+}
+
+/**
+ * Set site variables of an installed Drupal site
+ *
+ * @param unknown $site
+ * @param unknown $subdirs
+ */
+
+function _drush_dsd_set_default_variables($site, $subdirs) {
+  if (isset($site['variables'])) {
+    drush_print('Set variables.');
+    foreach ($site['variables'] as $key => $value) {
+      drush_shell_cd_and_exec($subdirs['slot0'], "drush vset --yes $key '$value'");
+    }
+  }
+}
+
+/**
+ * Set default admin password of an installed Drupal site.
+ *
+ * @param unknown $site
+ * @param unknown $subdirs
+ */
+
+function _drush_dsd_set_admin_password($site, $subdirs) {
+  if (isset($site['default-admin-password'])) {
+    drush_print("Set default admin password.");
+    $admin_pwd = $site['default-admin-password'];
+    drush_shell_cd_and_exec($subdirs['slot0'], "drush upwd admin --password='$admin_pwd'");
+  }
+}
+
+/**
+ * Revert features after installation / update
+ *
+ * @param unknown $site
+ * @param unknown $subdirs
+ */
+
+function _drush_dsd_features_revert($site, $subdirs, $slot) {
+  // TODO: check whether features module is present and enabled in Drupal deployment.
+  if (!isset($site['disable-features-revert'])) {
+    drush_print("Revert features.");
+    drush_shell_cd_and_exec($subdirs[$slot], "drush features-revert-all");
+  }
+}
+
+/**
+ * Set active slot of a site deployment.
+ *
+ * @param unknown $slot
+ * @param unknown $subdirs
+ */
+
+function _drush_dsd_set_active_slot($slot, $subdirs) {
+  drush_print(dt('Activate @slot.', array('@slot' => $slot)));
+  if (file_exists($subdirs['w'])) {
+    unlink($subdirs['w']);
+  }
+  symlink($subdirs[$slot], $subdirs['w']);
+}
+
+/**
+ * Return the name of active slot.
+ *
+ * @param unknown $subdirs
+ */
+
+function _drush_dsd_get_active_slot($subdirs) {
+  $target = readlink($subdirs['w']);
+  return basename($target);
+}
+
+/**
+ * Return an associative array from subdirectories of a given siteroot.
+ *
+ * @param unknown $root
+ */
+
+function _drush_dsd_get_subdirectories($root) {
+  $subdirs = array();
+  foreach (array('slot0', 'slot1', 'files', 'backup', 'release', 'w') as $k) {
+    $subdirs[$k] = join(DIRECTORY_SEPARATOR, array($root, $k));
+  }
+  return $subdirs;
+}
+
+/**
+ * Extract archive and move to target slot
+ *
+ * @param unknown $subdirs
+ * @param unknown $archive_path
+ * @param unknown $slot
+ * @return Ambigous <Always, boolean>|boolean
+ */
+
+function _drush_dsd_extract_archive($subdirs, $site, $archive_path, $slot) {
+  drush_log('Extract archive', 'ok');
+  $tmp = drush_tempdir();
+  $tar = drush_get_tar_executable();
+  umask(0027);
+  if (drush_shell_cd_and_exec($tmp, "$tar --no-same-permissions -xzf ". $archive_path) != TRUE) {
+    return drush_set_error('DRUSH_DSD_EXTRACT_FAIL', 'Failed to extract archive file.');
+  }
+  $tmp_dirs = drush_scan_directory($tmp, '/\./', array('.', '..', 'CVS'), 0, FALSE);
+  if (count($tmp_dirs) != 1) {
+    return drush_set_error('DRUSH_DSD_EXTRACT_FAIL', 'Invalid archive structure, single directory excepted in archive root.');
+  }
+  umask(0022);
+  $dist_temp = reset($tmp_dirs);
+  if (!is_dir($dist_temp->filename)) {
+    return drush_set_error('DRUSH_DSD_EXTRACT_FAIL', 'No root directory was found in archive.');
+  }
+
+  $user = $site['file-owner'];
+  $group = $site['file-group'];
+  drush_shell_cd_and_exec($tmp, "chown -R $user:$group ".$dist_temp->filename);
+
+  // move directory to slot0
+  drush_move_dir($dist_temp->filename, $subdirs[$slot], TRUE);
+
+  return TRUE;
+}
+
+/**
+ * Link the common shared directory to a selected slot.
+ *
+ * @param unknown $subdirs
+ * @param unknown $slot
+ */
+
+function _drush_dsd_link_files($subdirs, $slot) {
+  symlink($subdirs['files'], join(DIRECTORY_SEPARATOR, array($subdirs[$slot], 'sites', 'default', 'files')));
+}
+
+/**
+ * Set maintenance mode for a given slot.
+ *
+ * @param unknown $subdirs
+ * @param unknown $slot
+ * @param string $enable
+ */
+
+function _drush_dsd_set_maintenance_mode($subdirs, $slot, $enable = TRUE) {
+  if ($enable) {
+    drush_shell_cd_and_exec($subdirs[$slot], "drush vset -y maintenance_mode 1");
+  } else {
+    drush_shell_cd_and_exec($subdirs[$slot], "drush vset -y maintenance_mode 0");
+  }
+}
+
+/**
+ * Backup the slot's database into backup dir
+ *
+ * @param unknown $subdirs
+ * @param unknown $site
+ * @param unknown $slot
+ */
+
+function _drush_dsd_backup_database($subdirs, $site, $slot) {
+  // TODO: garbage collection of old backup files
+  // TODO: compress backup file
+  // NOTICE: pgsql could ask for password * requires testing *
+
+  // generate backup filename
+  $backup_filename = join(DIRECTORY_SEPARATOR, array($subdirs['backup'], $site['#name'].'.sql.gz'));
+  drush_shell_cd_and_exec($subdirs[$slot], "drush sql-dump | gzip > $backup_filename");
+}
+
+function _drush_dsd_updatedb($subdirs, $site, $slot) {
+  drush_shell_cd_and_exec($subdirs[$slot], "drush -y updatedb");
+}
+
+function _drush_dsd_cache_clear($subdirs, $site, $slot) {
+  drush_shell_cd_and_exec($subdirs[$slot], "drush cc all");
+}
+
+/**
+ * Implementation of drush dsd-init command.
+ * Initialize a new site environment and preinstall a drupal distribution.
+ *
+ * @return boolean|Ambigous <Always, boolean>
+ */
+
+function drush_dsd_init() {
+  $site = _drush_dsd_get_sitealias();
+  if ($site == FALSE) {
+    return FALSE;
+  }
+
+  // set site defaults
+  if (!isset($site['file-group'])) {
+    $site['file-group'] = 'www-data';
+  }
+  if (!isset($site['file-owner'])) {
+    $userInfo = posix_getpwuid(posix_getuid());
+    $site['file-owner'] = $userInfo['name'];
+  }
+
+  print_r($site);
+
+  $command = drush_get_command();
+  $archive_filename = $command['arguments'][1];
+  if (!file_exists($archive_filename)) {
+    return drush_set_error('DRUSH_DSD_ARCHIVE_NOT_FOUND', dt('Missing archive file: @file', array('@file' => $archive_filename)));
+  }
+
+  // create directory structure
+  drush_print('Create directory structure.');
+  if (!is_dir($site['dsd-root'])) {
+    return drush_set_error('DRUSH_DSD_ROOT_DIR_NOT_FOUND', dt("Not found dsd-root directory: @dir", array('@dir', $site['root'])));
+  }
+  $subdirs = _drush_dsd_get_subdirectories($site['dsd-root']);
+
+  // check slot0
+  if (is_dir($subdirs['slot0'])) {
+    return drush_set_error('DRUSH_DSD_EXISTS', 'slot0 exists, abort deployment.');
+  }
+
+  // create every directory except slot0
+  foreach (array('slot1', 'files', 'backup', 'release') as $k) {
+    drush_mkdir($subdirs[$k]);
+    chmod($subdirs[$k], 0750);
+    chown($subdirs[$k], $site['file-owner']);
+    chgrp($subdirs[$k], $site['file-group']);
+  }
+  chmod($subdirs['files'], 02770); // g+rwxs
+  //chgrp($subdirs['files'], $site['file-group']);
+
+  drush_print('Extract archive.');
+  // make path relative
+  // TODO: proper absolute / relative path handling / suppot remote url fetch
+  $archive_path = join(DIRECTORY_SEPARATOR, array(realpath('.'), $archive_filename));
+
+  // extract archive file
+  _drush_dsd_extract_archive($subdirs, $site, $archive_path, 'slot0');
+
+  // clone settings.php and set permission as writeable
+  $settingsfile = $subdirs['slot0'] . '/sites/default/settings.php';
+  if (!file_exists($settingsfile)) {
+    drush_op('copy', $subdirs['slot0'] . '/sites/default/default.settings.php', $settingsfile);
+  }
+  chmod($settingsfile, 0664);
+  chgrp($settingsfile, $site['file-group']);
+
+  _drush_dsd_link_files($subdirs, 'slot0');
+
+  if (!_drush_dsd_site_install($site, $subdirs)) {
+    return FALSE;
+  }
+  _drush_dsd_set_default_variables($site, $subdirs);
+  _drush_dsd_set_admin_password($site, $subdirs);
+  _drush_dsd_features_revert($site, $subdirs, 'slot0');
+  _drush_dsd_set_active_slot('slot0', $subdirs);
+
+}
+
+/**
+ * Implementation of drush dsd-update command.
+ * Update an existing drupal site deployment.
+ *
+ */
+
+function drush_dsd_update() {
+  if (($site = _drush_dsd_get_sitealias()) == FALSE) {
+    return FALSE;
+  }
+  print_r($site);
+  echo "\n";
+  $subdirs = _drush_dsd_get_subdirectories($site['dsd-root']);
+
+  // validate parameters
+  $command = drush_get_command();
+  $archive_filename = $command['arguments'][1];
+  if (!file_exists($archive_filename)) {
+    return drush_set_error('DRUSH_DSD_ARCHIVE_NOT_FOUND', dt('Missing archive file: @file', array('@file' => $archive_filename)));
+  }
+  $archive_path = join(DIRECTORY_SEPARATOR, array(realpath('.'), $archive_filename));
+
+  // determine slots
+  $active_slot = _drush_dsd_get_active_slot($subdirs);
+  drush_log(dt('Active slot: @slot', array('@slot'  => $active_slot)), 'ok');
+  $update_slot = $active_slot == 'slot0' ? 'slot1' : 'slot0';
+
+  // extract archive and move to target
+  if (!_drush_dsd_extract_archive($subdirs, $site, $archive_path, $update_slot)) {
+    return FALSE;
+  }
+
+  // copy settings file from old slot
+  $settingsfile = $subdirs[$update_slot] . '/sites/default/settings.php';
+  drush_op('copy', $subdirs[$active_slot] . '/sites/default/settings.php', $settingsfile);
+  chmod($settingsfile, 0440);
+
+  _drush_dsd_link_files($subdirs, $update_slot);
+  _drush_dsd_set_maintenance_mode($subdirs, $active_slot);
+  _drush_dsd_backup_database($subdirs, $site, $active_slot);
+  _drush_dsd_updatedb($subdirs, $site, $update_slot);
+  _drush_dsd_features_revert($site, $subdirs, $update_slot);
+  _drush_dsd_cache_clear($subdirs, $site, $update_slot);
+  _drush_dsd_set_active_slot($update_slot, $subdirs);
+  _drush_dsd_set_maintenance_mode($subdirs, $active_slot, FALSE);
+
+}
+
+function drush_dsd_rollback() {
+  if (($site = _drush_dsd_get_sitealias()) == FALSE) {
+    return FALSE;
+  }
+  print_r($site);
+  echo "\n";
+  $subdirs = _drush_dsd_get_subdirectories($site['dsd-root']);
+
+  // determine slots
+  $active_slot = _drush_dsd_get_active_slot($subdirs);
+  drush_log(dt('Active slot: @slot', array('@slot'  => $active_slot)), 'ok');
+  $update_slot = $active_slot == 'slot0' ? 'slot1' : 'slot0';
+
+
+}
