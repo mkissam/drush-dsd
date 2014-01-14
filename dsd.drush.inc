@@ -256,6 +256,26 @@ function _drush_dsd_backup_database($subdirs, $site, $slot) {
   drush_shell_cd_and_exec($subdirs[$slot], "drush sql-dump | gzip > $backup_filename");
 }
 
+/**
+ * Restore database from a previous backup
+ *
+ * @param unknown $subdirs
+ * @param unknown $site
+ * @param unknown $slot
+ */
+
+function _drush_dsd_restore_database($subdirs, $site, $slot) {
+  $backup_filename = join(DIRECTORY_SEPARATOR, array($subdirs['backup'], $site['#name'].'.sql.gz'));
+  if (!file_exists($backup_filename)) {
+    return drush_set_error('DRUSH_DSD_DB_NOT_FOUND', dt('No database archive was found: @backup_filename.', array('@backup_filename' => $backup_filename)));
+  }
+  if (!drush_shell_cd_and_exec($subdirs[$slot], "gzcat $backup_filename | drush sqlc")) {
+    return drush_set_error('DRUSH_DSD_DB_RESTORE_FAIL', 'Failed to restore database archive');
+  }
+
+  return TRUE;
+}
+
 function _drush_dsd_updatedb($subdirs, $site, $slot) {
   drush_shell_cd_and_exec($subdirs[$slot], "drush -y updatedb");
 }
@@ -285,8 +305,6 @@ function drush_dsd_init() {
     $userInfo = posix_getpwuid(posix_getuid());
     $site['file-owner'] = $userInfo['name'];
   }
-
-  print_r($site);
 
   $command = drush_get_command();
   $archive_filename = $command['arguments'][1];
@@ -354,8 +372,6 @@ function drush_dsd_update() {
   if (($site = _drush_dsd_get_sitealias()) == FALSE) {
     return FALSE;
   }
-  print_r($site);
-  echo "\n";
   $subdirs = _drush_dsd_get_subdirectories($site['dsd-root']);
 
   // validate parameters
@@ -392,18 +408,28 @@ function drush_dsd_update() {
 
 }
 
+/**
+ * Implementation of dsd-rollback command.
+ * Revert actual site to latest working version.
+ *
+ * @return boolean
+ */
+
 function drush_dsd_rollback() {
   if (($site = _drush_dsd_get_sitealias()) == FALSE) {
     return FALSE;
   }
-  print_r($site);
-  echo "\n";
   $subdirs = _drush_dsd_get_subdirectories($site['dsd-root']);
 
   // determine slots
   $active_slot = _drush_dsd_get_active_slot($subdirs);
   drush_log(dt('Active slot: @slot', array('@slot'  => $active_slot)), 'ok');
-  $update_slot = $active_slot == 'slot0' ? 'slot1' : 'slot0';
+  $revert_slot = $active_slot == 'slot0' ? 'slot1' : 'slot0';
 
-
+  _drush_dsd_set_maintenance_mode($subdirs, $active_slot);
+  if (!_drush_dsd_restore_database($subdirs, $site, $revert_slot)) {
+    return FALSE;
+  }
+  _drush_dsd_set_active_slot($revert_slot, $subdirs);
+  _drush_dsd_set_maintenance_mode($subdirs, $revert_slot, FALSE);
 }
