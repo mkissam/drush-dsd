@@ -191,7 +191,7 @@ function _drush_dsd_extract_archive($subdirs, $site, $archive_path, $slot) {
   if (drush_shell_cd_and_exec($tmp, "$tar --no-same-permissions -xzf ". $archive_path) != TRUE) {
     return drush_set_error('DRUSH_DSD_EXTRACT_FAIL', 'Failed to extract archive file.');
   }
-  $tmp_dirs = drush_scan_directory($tmp, '/\./', array('.', '..', 'CVS'), 0, FALSE);
+  $tmp_dirs = drush_scan_directory($tmp, '/./', array('.', '..', 'CVS'), 0, FALSE);
   if (count($tmp_dirs) != 1) {
     return drush_set_error('DRUSH_DSD_EXTRACT_FAIL', 'Invalid archive structure, single directory excepted in archive root.');
   }
