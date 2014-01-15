@@ -130,7 +130,7 @@ function _drush_dsd_features_revert($site, $subdirs, $slot) {
   // TODO: check whether features module is present and enabled in Drupal deployment.
   if (!isset($site['disable-features-revert'])) {
     drush_print("Revert features.");
-    drush_shell_cd_and_exec($subdirs[$slot], "drush features-revert-all");
+    drush_shell_cd_and_exec($subdirs[$slot], "drush features-revert-all --yes");
   }
 }
 
