@@ -40,6 +40,14 @@ function dsd_drush_command() {
       ),
       'required-arguments' => 1,
   );
+  $items['dsd-status'] = array(
+      'description' => 'Report deployment status',
+      'bootstrap' => DRUSH_BOOTSTRAP_DRUSH,
+      'arguments' => array(
+          'site' => 'Site alias',
+      ),
+      'required-arguments' => 1,
+  );
   return $items;
 }
 
@@ -342,6 +350,14 @@ function drush_dsd_init() {
   // extract archive file
   _drush_dsd_extract_archive($subdirs, $site, $archive_path, 'slot0');
 
+  // move md5 file to release info file when exists
+  $archive_basename = basename($archive_path, '.tar.gz');
+  $md5filename = join('.', array($archive_basename, 'md5'));
+  drush_print('md5filename: '.$md5filename);
+  if (file_exists($md5filename)) {
+    drush_op('copy', $md5filename ,$subdirs['slot0'] . '/release');
+  }
+
   // clone settings.php and set permission as writeable
   $settingsfile = $subdirs['slot0'] . '/sites/default/settings.php';
   if (!file_exists($settingsfile)) {
@@ -392,6 +408,14 @@ function drush_dsd_update() {
     return FALSE;
   }
 
+  // move md5 file to release info file when exists
+  $archive_basename = basename($archive_path, '.tar.gz');
+  $md5filename = join('.', array($archive_basename, 'md5'));
+  drush_print('md5filename: '.$md5filename);
+  if (file_exists($md5filename)) {
+    drush_op('copy', $md5filename ,$subdirs[$update_slot] . '/release');
+  }
+
   // copy settings file from old slot
   $settingsfile = $subdirs[$update_slot] . '/sites/default/settings.php';
   drush_op('copy', $subdirs[$active_slot] . '/sites/default/settings.php', $settingsfile);
@@ -432,4 +456,82 @@ function drush_dsd_rollback() {
   }
   _drush_dsd_set_active_slot($revert_slot, $subdirs);
   _drush_dsd_set_maintenance_mode($subdirs, $revert_slot, FALSE);
+}
+
+/**
+ * Return release info file name.
+ *
+ */
+
+function drush_dsd_get_release_info_filename($root, $slot) {
+  return join(DIRECTORY_SEPARATOR, array($root, $slot, 'release'));
+}
+
+/**
+ * Return release information for a given slot
+ *
+ * @param string $root
+ *    site root directory
+ * @param string $slot
+ *    site slot
+ * @return
+ *   Content of slot info file, if not found returns
+ *   N/A.
+ *
+ */
+
+function drush_dsd_get_release_info($root, $slot) {
+  $release_file = drush_dsd_get_release_info_filename($root, $slot);
+  if (file_exists($release_file)) {
+    // split md5
+    return trim(end(explode(' ', file_get_contents($release_file))));
+  } else {
+    return "N/A";
+  }
+}
+
+/**
+ * Implementation of dsd-status command.
+ * Report of actual deployment status of the site.
+ *
+ */
+
+function drush_dsd_status() {
+  if (($site = _drush_dsd_get_sitealias()) == FALSE) {
+    return FALSE;
+  }
+  $subdirs = _drush_dsd_get_subdirectories($site['dsd-root']);
+  $slot = '';
+  $status = 'NOT INSTALLED';
+
+  if (file_exists($site['dsd-root'].'/w')) {
+    $active_slot = _drush_dsd_get_active_slot($subdirs);
+  }
+
+  if (file_exists($site['dsd-root'].'/w/index.php')) {
+    $status = 'INSTALLED';
+
+    // check available updates
+    if (isset($site['package-provider'])) {
+      switch ($site['package-provider']) {
+        case 'static-tarball':
+          $catalog = file_get_contents($site['package-repository'].'/'.
+            $site['package-branch'].'.md5');
+          $md5sum = trim(end(explode(' ', $catalog)));
+          $release_info = drush_dsd_get_release_info($site['dsd-root'], $active_slot);
+          if ($md5sum != $release_info) {
+            $status = 'UPDATE AVAILABLE';
+          }
+          $update = dt('(@localrelease => @newrelease)', array(
+            '@localrelease' => $release_info,
+            '@newrelease' => $md5sum));
+          break;
+      }
+    }
+  }
+
+  drush_print(dt('@status @slot @update', array(
+    '@status' => $status,
+    '@slot' => $slot,
+    '@update' => $update)));
 }

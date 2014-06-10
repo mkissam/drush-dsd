@@ -30,6 +30,9 @@ $aliases['groups-dev'] = array(
   'profile' => 'standard',
   'default-admin-password' => 'my-s3cr3t-admin-passw0rd',
   'disable-features-revert' => TRUE,
+  'package-provider' => 'static-tarball',
+  'package-repository' => 'http://tarballs.local/groups',
+  'package-branch' => 'groups-latest',
 );
 
 ```
@@ -89,6 +92,13 @@ $ drush dsd-init @groups-dev drupal-7.24.tar.gz
 $ wget http://ftp.drupal.org/files/projects/drupal-7.25.tar.gz
 $ drush dsd-update @groups-dev drupal-7.25.tar.gz
 ```
+
+### Query available releases
+
+```bash
+$ drush dsd-status @groups-dev
+```
+
 
 ### Rollback to latest working version ###
 
