@@ -176,7 +176,7 @@ function _drush_dsd_get_active_slot($subdirs) {
 
 function _drush_dsd_get_subdirectories($root) {
   $subdirs = array();
-  foreach (array('slot0', 'slot1', 'files', 'backup', 'release', 'w') as $k) {
+  foreach (array('etc', 'slot0', 'slot1', 'files', 'backup', 'release', 'w') as $k) {
     $subdirs[$k] = join(DIRECTORY_SEPARATOR, array($root, $k));
   }
   return $subdirs;
@@ -364,12 +364,28 @@ function drush_dsd_init() {
   }
 
   // clone settings.php and set permission as writeable
-  $settingsfile = $subdirs['slot0'] . '/sites/default/settings.php';
-  if (!file_exists($settingsfile)) {
-    drush_op('copy', $subdirs['slot0'] . '/sites/default/default.settings.php', $settingsfile);
+  $source_settings = $subdirs['slot0'] . '/sites/default/default.settings.php';
+  $target_settings = $subdirs['slot0'] . '/sites/default/settings.php';
+  // inject custom settings feature to default.settings.php
+  $local_settings_src = "
+// Override settings in this file.
+if (file_exists('./' . conf_path() . '/local_settings.php')) {
+  include_once './' . conf_path() . '/local_settings.php';
+}
+";
+  file_put_contents($source_settings, $local_settings_src, FILE_APPEND);
+  drush_op('copy', $source_settings, $target_settings);
+  chmod($target_settings, 0664);
+  chgrp($target_settings, $site['file-group']);
+
+  // clone local_settings
+  $source_local = $subdirs['etc'] . '/settings.php';
+  $target_local = $subdirs['slot0'] . '/sites/default/local_settings.php';
+  if (file_exists($source_local)) {
+    drush_op('copy', $source_local, $target_local);
+    chmod($target_local, 0440);
+    chgrp($target_local, $site['file-group']);
   }
-  chmod($settingsfile, 0664);
-  chgrp($settingsfile, $site['file-group']);
 
   _drush_dsd_link_files($subdirs, 'slot0');
 
@@ -429,10 +445,21 @@ function drush_dsd_update() {
     drush_op('copy', $md5filename ,$subdirs[$update_slot] . '/release');
   }
 
-  // copy settings file from old slot
-  $settingsfile = $subdirs[$update_slot] . '/sites/default/settings.php';
-  drush_op('copy', $subdirs[$active_slot] . '/sites/default/settings.php', $settingsfile);
-  chmod($settingsfile, 0440);
+  // copy settings file from old slot and optionally merge custom
+  // settings
+  $source_settings = $subdirs[$active_slot] . '/sites/default/settings.php';
+  $target_settings = $subdirs[$update_slot] . '/sites/default/settings.php';
+  drush_op('copy', $source_settings, $target_settings);
+  chmod($target_settings, 0440);
+
+  // clone local_settings
+  $source_local = $subdirs['etc'] . '/settings.php';
+  $target_local = $subdirs[$update_slot] . '/sites/default/local_settings.php';
+  if (file_exists($source_local)) {
+    drush_op('copy', $source_local, $target_local);
+    chmod($target_local, 0440);
+    chgrp($target_local, $site['file-group']);
+  }
 
   _drush_dsd_link_files($subdirs, $update_slot);
   _drush_dsd_set_maintenance_mode($subdirs, $active_slot);
