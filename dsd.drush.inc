@@ -343,16 +343,21 @@ function drush_dsd_init() {
   //chgrp($subdirs['files'], $site['file-group']);
 
   drush_print('Extract archive.');
-  // make path relative
-  // TODO: proper absolute / relative path handling / suppot remote url fetch
-  $archive_path = join(DIRECTORY_SEPARATOR, array(realpath('.'), $archive_filename));
+  if (strpos($archive_filename, '/') === 0) {
+    $archive_path = $archive_filename;
+  } else if (strpos($archive_filename, 'http://' === 0)) {
+    // TODO: implement remote url fetch
+    die('Remote url fetch not implemented.');
+  } else {
+    // make path relative to current directory
+    $archive_path = join(DIRECTORY_SEPARATOR, array(realpath('.'), $archive_filename));
+  }
 
   // extract archive file
   _drush_dsd_extract_archive($subdirs, $site, $archive_path, 'slot0');
 
   // move md5 file to release info file when exists
-  $archive_basename = basename($archive_path, '.tar.gz');
-  $md5filename = join('.', array($archive_basename, 'md5'));
+  $md5filename = str_replace('.tar.gz', '.md5', $archive_path);
   drush_print('md5filename: '.$md5filename);
   if (file_exists($md5filename)) {
     drush_op('copy', $md5filename ,$subdirs['slot0'] . '/release');
@@ -396,7 +401,16 @@ function drush_dsd_update() {
   if (!file_exists($archive_filename)) {
     return drush_set_error('DRUSH_DSD_ARCHIVE_NOT_FOUND', dt('Missing archive file: @file', array('@file' => $archive_filename)));
   }
-  $archive_path = join(DIRECTORY_SEPARATOR, array(realpath('.'), $archive_filename));
+
+  if (strpos($archive_filename, '/') === 0) {
+    $archive_path = $archive_filename;
+  } else if (strpos($archive_filename, 'http://' === 0)) {
+    // TODO: implement remote url fetch
+    die('Remote url fetch not implemented.');
+  } else {
+    // make path relative to current directory
+    $archive_path = join(DIRECTORY_SEPARATOR, array(realpath('.'), $archive_filename));
+  }
 
   // determine slots
   $active_slot = _drush_dsd_get_active_slot($subdirs);
@@ -409,8 +423,7 @@ function drush_dsd_update() {
   }
 
   // move md5 file to release info file when exists
-  $archive_basename = basename($archive_path, '.tar.gz');
-  $md5filename = join('.', array($archive_basename, 'md5'));
+  $md5filename = str_replace('.tar.gz', '.md5', $archive_path);
   drush_print('md5filename: '.$md5filename);
   if (file_exists($md5filename)) {
     drush_op('copy', $md5filename ,$subdirs[$update_slot] . '/release');
