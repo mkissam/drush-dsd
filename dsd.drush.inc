@@ -497,7 +497,7 @@ function drush_dsd_get_release_info($root, $slot) {
   $release_file = drush_dsd_get_release_info_filename($root, $slot);
   if (file_exists($release_file)) {
     // split md5
-    return trim(end(explode(' ', file_get_contents($release_file))));
+    return reset(explode(' ', file_get_contents($release_file)));
   } else {
     return "N/A";
   }
@@ -530,7 +530,7 @@ function drush_dsd_status() {
         case 'static-tarball':
           $catalog = file_get_contents($site['package-repository'].'/'.
             $site['package-branch'].'.md5');
-          $md5sum = trim(end(explode(' ', $catalog)));
+          $md5sum = reset(explode(' ', $catalog));
           $release_info = drush_dsd_get_release_info($site['dsd-root'], $active_slot);
           if ($md5sum != $release_info) {
             $status = 'UPDATE AVAILABLE';
