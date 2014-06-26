@@ -451,6 +451,7 @@ function drush_dsd_update() {
   $target_settings = $subdirs[$update_slot] . '/sites/default/settings.php';
   drush_op('copy', $source_settings, $target_settings);
   chmod($target_settings, 0440);
+  chgrp($target_settings, $site['file-group']);
 
   // clone local_settings
   $source_local = $subdirs['etc'] . '/settings.php';
