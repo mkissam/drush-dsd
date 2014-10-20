@@ -21,7 +21,7 @@ function dsd_drush_command() {
       'site' => 'Site alias',
       'file' => 'The site archive file that contains the distribution.',
     ),
-    'required-arguments' => 2,
+    'required-arguments' => 1,
   );
   $items['dsd-update'] = array(
       'description' => 'Update an existing site environment',
@@ -30,7 +30,7 @@ function dsd_drush_command() {
           'site' => 'Site alias',
           'file' => 'The site archive file that contains the distribution.',
       ),
-      'required-arguments' => 2,
+      'required-arguments' => 1,
   );
   $items['dsd-rollback'] = array(
       'description' => 'Rollback to the previous site environment',
@@ -300,6 +300,8 @@ function _drush_dsd_cache_clear($subdirs, $site, $slot) {
  */
 
 function drush_dsd_init() {
+  drush_include_engine('release_info', 'updatexml');
+
   $site = _drush_dsd_get_sitealias();
   if ($site == FALSE) {
     return FALSE;
@@ -315,9 +317,11 @@ function drush_dsd_init() {
   }
 
   $command = drush_get_command();
-  $archive_filename = $command['arguments'][1];
-  if (!file_exists($archive_filename)) {
-    return drush_set_error('DRUSH_DSD_ARCHIVE_NOT_FOUND', dt('Missing archive file: @file', array('@file' => $archive_filename)));
+  if ($site['package-provider'] == 'static-tarball') {
+    $archive_filename = $command['arguments'][1];
+    if (!file_exists($archive_filename)) {
+      return drush_set_error('DRUSH_DSD_ARCHIVE_NOT_FOUND', dt('Missing archive file: @file', array('@file' => $archive_filename)));
+    }
   }
 
   // create directory structure
@@ -342,25 +346,67 @@ function drush_dsd_init() {
   chmod($subdirs['files'], 02770); // g+rwxs
   //chgrp($subdirs['files'], $site['file-group']);
 
-  drush_print('Extract archive.');
-  if (strpos($archive_filename, '/') === 0) {
-    $archive_path = $archive_filename;
-  } else if (strpos($archive_filename, 'http://' === 0)) {
-    // TODO: implement remote url fetch
-    die('Remote url fetch not implemented.');
-  } else {
-    // make path relative to current directory
-    $archive_path = join(DIRECTORY_SEPARATOR, array(realpath('.'), $archive_filename));
-  }
+  switch ($site['package-provider']) {
+    case 'static-tarball':
+      drush_print('Extract archive.');
+      if (strpos($archive_filename, '/') === 0) {
+        $archive_path = $archive_filename;
+      } else if (strpos($archive_filename, 'http://' === 0)) {
+        // TODO: implement remote url fetch
+        die('Remote url fetch not implemented.');
+      } else {
+        // make path relative to current directory
+        $archive_path = join(DIRECTORY_SEPARATOR, array(realpath('.'), $archive_filename));
+      }
 
-  // extract archive file
-  _drush_dsd_extract_archive($subdirs, $site, $archive_path, 'slot0');
+      // extract archive file
+      _drush_dsd_extract_archive($subdirs, $site, $archive_path, 'slot0');
 
-  // move md5 file to release info file when exists
-  $md5filename = str_replace('.tar.gz', '.md5', $archive_path);
-  drush_print('md5filename: '.$md5filename);
-  if (file_exists($md5filename)) {
-    drush_op('copy', $md5filename ,$subdirs['slot0'] . '/release');
+      // move md5 file to release info file when exists
+      $md5filename = str_replace('.tar.gz', '.md5', $archive_path);
+      drush_print('md5filename: '.$md5filename);
+      if (file_exists($md5filename)) {
+        drush_op('copy', $md5filename ,$subdirs['slot0'] . '/release');
+      }
+      break;
+    case 'drush-dl':
+
+      $request = array(
+        'name' => $site['package-dist-name'],
+        'version' => '',
+        'drupal_version' => '7.x',
+        'project_version' => '',
+      );
+
+      if (isset($site['package-repository'])) {
+        $request['status url'] = $site['package-repository'];
+      }
+      $dev = ($site['package-dev-branch'] == TRUE);
+      $restrict_to = $dev ? 'dev' : '';
+      $release_info = release_info_fetch($request, $restrict_to);
+
+      $stmt = 'drush dl';
+      $stmt .= ' --debug';
+      if (isset($site['package-repository'])) {
+        $stmt .= ' --source='.$site['package-repository'];
+      }
+      if ($dev) {
+        $stmt .= ' --dev';
+      }
+      $stmt .= ' --drupal-project-rename=slot0';
+      $stmt .= ' '.$site['package-dist-name'];
+      umask(0027);
+      $result = drush_shell_cd_and_exec($site['dsd-root'], $stmt);
+      umask(0022);
+      if ($result != TRUE) {
+        return drush_set_error('DRUSH_DSD_INSTALL_FAILED', 'Distribution download failed.');
+      }
+      $user = $site['file-owner'];
+      $group = $site['file-group'];
+      drush_shell_cd_and_exec($site['dsd-root'], "chown -R $user:$group slot0");
+      $ri = sprintf('%s %s', $release_info['name'], $release_info['mdhash']);
+      file_put_contents($subdirs['slot0'] . '/release', $ri);
+      break;
   }
 
   // clone settings.php and set permission as writeable
@@ -411,38 +457,81 @@ function drush_dsd_update() {
   }
   $subdirs = _drush_dsd_get_subdirectories($site['dsd-root']);
 
-  // validate parameters
-  $command = drush_get_command();
-  $archive_filename = $command['arguments'][1];
-  if (!file_exists($archive_filename)) {
-    return drush_set_error('DRUSH_DSD_ARCHIVE_NOT_FOUND', dt('Missing archive file: @file', array('@file' => $archive_filename)));
-  }
-
-  if (strpos($archive_filename, '/') === 0) {
-    $archive_path = $archive_filename;
-  } else if (strpos($archive_filename, 'http://' === 0)) {
-    // TODO: implement remote url fetch
-    die('Remote url fetch not implemented.');
-  } else {
-    // make path relative to current directory
-    $archive_path = join(DIRECTORY_SEPARATOR, array(realpath('.'), $archive_filename));
-  }
-
   // determine slots
   $active_slot = _drush_dsd_get_active_slot($subdirs);
   drush_log(dt('Active slot: @slot', array('@slot'  => $active_slot)), 'ok');
   $update_slot = $active_slot == 'slot0' ? 'slot1' : 'slot0';
 
-  // extract archive and move to target
-  if (!_drush_dsd_extract_archive($subdirs, $site, $archive_path, $update_slot)) {
-    return FALSE;
-  }
+  // validate parameters
+  $command = drush_get_command();
+  switch ($site['package-provider']) {
+    case 'static-tarball':
+      $archive_filename = $command['arguments'][1];
+      if (!file_exists($archive_filename)) {
+        return drush_set_error('DRUSH_DSD_ARCHIVE_NOT_FOUND', dt('Missing archive file: @file', array('@file' => $archive_filename)));
+      }
 
-  // move md5 file to release info file when exists
-  $md5filename = str_replace('.tar.gz', '.md5', $archive_path);
-  drush_print('md5filename: '.$md5filename);
-  if (file_exists($md5filename)) {
-    drush_op('copy', $md5filename ,$subdirs[$update_slot] . '/release');
+      if (strpos($archive_filename, '/') === 0) {
+        $archive_path = $archive_filename;
+      } else if (strpos($archive_filename, 'http://' === 0)) {
+        // TODO: implement remote url fetch
+        die('Remote url fetch not implemented.');
+      } else {
+        // make path relative to current directory
+        $archive_path = join(DIRECTORY_SEPARATOR, array(realpath('.'), $archive_filename));
+      }
+
+      // extract archive and move to target
+      if (!_drush_dsd_extract_archive($subdirs, $site, $archive_path, $update_slot)) {
+        return FALSE;
+      }
+
+      // move md5 file to release info file when exists
+      $md5filename = str_replace('.tar.gz', '.md5', $archive_path);
+      drush_print('md5filename: '.$md5filename);
+      if (file_exists($md5filename)) {
+        drush_op('copy', $md5filename ,$subdirs[$update_slot] . '/release');
+      }
+      break;
+    case 'drush-dl':
+      drush_include_engine('release_info', 'updatexml');
+      $request = array(
+        'name' => $site['package-dist-name'],
+        'version' => '',
+        'drupal_version' => '7.x',
+        'project_version' => '',
+      );
+
+      if (isset($site['package-repository'])) {
+        $request['status url'] = $site['package-repository'];
+      }
+      $dev = ($site['package-dev-branch'] == TRUE);
+      $restrict_to = $dev ? 'dev' : '';
+      $release_info = release_info_fetch($request, $restrict_to);
+
+      $stmt = 'drush dl';
+      $stmt .= ' --yes'; // pass --yes to override existing directories
+      $stmt .= ' --debug';
+      if (isset($site['package-repository'])) {
+        $stmt .= ' --source='.$site['package-repository'];
+      }
+      if ($dev) {
+        $stmt .= ' --dev';
+      }
+      $stmt .= ' --drupal-project-rename='.$update_slot;
+      $stmt .= ' '.$site['package-dist-name'];
+      umask(0027);
+      $result = drush_shell_cd_and_exec($site['dsd-root'], $stmt);
+      umask(0022);
+      if ($result != TRUE) {
+        return drush_set_error('DRUSH_DSD_INSTALL_FAILED', 'Distribution download failed.');
+      }
+      $user = $site['file-owner'];
+      $group = $site['file-group'];
+      drush_shell_cd_and_exec($site['dsd-root'], "chown -R $user:$group slot0");
+      $ri = sprintf('%s %s', $release_info['name'], $release_info['mdhash']);
+      file_put_contents($subdirs[$update_slot] . '/release', $ri);
+      break;
   }
 
   // copy settings file from old slot and optionally merge custom
@@ -566,6 +655,31 @@ function drush_dsd_status() {
           $update = dt('(@localrelease => @newrelease)', array(
             '@localrelease' => $release_info,
             '@newrelease' => $md5sum));
+          break;
+        case 'drush-dl':
+          drush_include_engine('release_info', 'updatexml');
+          $request = array(
+            'name' => $site['package-dist-name'],
+            'version' => '',
+            'drupal_version' => '7.x',
+            'project_version' => '',
+          );
+
+          if (isset($site['package-repository'])) {
+            $request['status url'] = $site['package-repository'];
+          }
+          $dev = ($site['package-dev-branch'] == TRUE);
+          $restrict_to = $dev ? 'dev' : '';
+          $release_info = release_info_fetch($request, $restrict_to);
+          $ri = sprintf('%s %s', $release_info['name'], $release_info['mdhash']);
+          $filename = drush_dsd_get_release_info_filename($site['dsd-root'], $active_slot);
+          $release_info = file_get_contents($filename);
+          if ($ri != $release_info) {
+            $status = 'UPDATE AVAILABLE';
+          }
+          $update = dt('(@localrelease => @newrelease)', array(
+            '@localrelease' => $release_info,
+            '@newrelease' => $ri));
           break;
       }
     }

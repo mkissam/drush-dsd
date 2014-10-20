@@ -30,9 +30,15 @@ $aliases['groups-dev'] = array(
   'profile' => 'standard',
   'default-admin-password' => 'my-s3cr3t-admin-passw0rd',
   'disable-features-revert' => TRUE,
+   // Static tarball provider
   'package-provider' => 'static-tarball',
   'package-repository' => 'http://tarballs.local/groups',
   'package-branch' => 'groups-latest',
+   // Drush dl manifest provider
+  'package-provider' => 'drush-dl',
+  'package-repository' => 'http://tarballs.openstack.org/groups/drupal-updates/release-history',
+  'package-dist-name' => 'groups',
+  'package-dev-branch' => TRUE,
 );
 
 ```
@@ -81,16 +87,32 @@ $aliases['groups-dev'] = array(
 
 ### Initialize a new site environment ###
 
+With tarball provider:
+
 ```bash
 $ wget http://ftp.drupal.org/files/projects/drupal-7.24.tar.gz
 $ drush dsd-init @groups-dev drupal-7.24.tar.gz
 ```
 
+Easy way with drush-dl provider:
+
+```bash
+$ drush dsd-init @groups-dev
+```
+
 ### Upgrade to a new release or snapshot ###
+
+With tarball provider:
 
 ```bash
 $ wget http://ftp.drupal.org/files/projects/drupal-7.25.tar.gz
 $ drush dsd-update @groups-dev drupal-7.25.tar.gz
+```
+
+With drush-dl provider:
+
+```bash
+$ drush dsd-update @groups-dev
 ```
 
 ### Query available releases
