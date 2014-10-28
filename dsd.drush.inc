@@ -526,13 +526,13 @@ function drush_dsd_update() {
       if ($result != TRUE) {
         return drush_set_error('DRUSH_DSD_INSTALL_FAILED', 'Distribution download failed.');
       }
-      $user = $site['file-owner'];
-      $group = $site['file-group'];
-      drush_shell_cd_and_exec($site['dsd-root'], "chown -R $user:$group slot0");
       $ri = sprintf('%s %s', $release_info['name'], $release_info['mdhash']);
       file_put_contents($subdirs[$update_slot] . '/release', $ri);
       break;
   }
+  $user = $site['file-owner'];
+  $group = $site['file-group'];
+  drush_shell_cd_and_exec($site['dsd-root'], "chown -R $user:$group $update_slot");
 
   // copy settings file from old slot and optionally merge custom
   // settings
