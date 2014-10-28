@@ -651,10 +651,12 @@ function drush_dsd_status() {
           $release_info = drush_dsd_get_release_info($site['dsd-root'], $active_slot);
           if ($md5sum != $release_info) {
             $status = 'UPDATE AVAILABLE';
+            $version = dt('(@localrelease => @newrelease)', array(
+              '@localrelease' => $release_info,
+              '@newrelease' => $md5sum));
+          } else {
+            $version = dt('(@localrelease)', array('@localrelease' => $release_info));
           }
-          $update = dt('(@localrelease => @newrelease)', array(
-            '@localrelease' => $release_info,
-            '@newrelease' => $md5sum));
           break;
         case 'drush-dl':
           drush_include_engine('release_info', 'updatexml');
@@ -676,17 +678,19 @@ function drush_dsd_status() {
           $release_info = file_get_contents($filename);
           if ($ri != $release_info) {
             $status = 'UPDATE AVAILABLE';
+            $version = dt('(@localrelease => @newrelease)', array(
+              '@localrelease' => $release_info,
+              '@newrelease' => $ri));
+          } else {
+            $version = dt('(@localrelease)', array('@localrelease' => $release_info));
           }
-          $update = dt('(@localrelease => @newrelease)', array(
-            '@localrelease' => $release_info,
-            '@newrelease' => $ri));
           break;
       }
     }
   }
 
-  drush_print(dt('@status @slot @update', array(
+  drush_print(dt('@status @slot @version', array(
     '@status' => $status,
     '@slot' => $slot,
-    '@update' => $update)));
+    '@version' => $version)));
 }
